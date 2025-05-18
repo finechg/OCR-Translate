@@ -1,12 +1,14 @@
-# main_window.py placeholder
-
-
-from PySide6.QtWidgets import QMainWindow, QFileDialog, QPushButton, QTextEdit, QVBoxLayout, QWidget, QLabel, QProgressBar
+from PySide6.QtWidgets import (
+    QMainWindow, QFileDialog, QPushButton, QTextEdit,
+    QVBoxLayout, QWidget, QLabel, QProgressBar, QApplication
+)
 from PySide6.QtCore import QObject, Signal, QThreadPool
+
 
 class SignalHandler(QObject):
     page_done = Signal(int, str)
     finished = Signal()
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -26,24 +28,25 @@ class MainWindow(QMainWindow):
         self.translate_button = QPushButton("PDF 선택 및 번역", self)
         self.translate_button.clicked.connect(self.run_translate)
 
-        layout = QVBoxLayout()
-        layout.addWidget(self.translate_button)
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.progress_bar)
-self.cancel_button = QPushButton("중단", self)
+        self.cancel_button = QPushButton("중단", self)
         self.cancel_button.clicked.connect(self.cancel_translation)
 
         self.save_button = QPushButton("결과 저장", self)
         self.save_button.clicked.connect(self.save_result)
 
+        self.epub_button = QPushButton("EPUB 번역 → PDF 저장", self)
+        self.epub_button.clicked.connect(self.run_epub_translate)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.translate_button)
+        layout.addWidget(self.status_label)
+        layout.addWidget(self.progress_bar)
         layout.addWidget(self.cancel_button)
         layout.addWidget(self.save_button)
-self.epub_button = QPushButton("EPUB 번역 → PDF 저장", self)
-        self.epub_button.clicked.connect(self.run_epub_translate)
         layout.addWidget(self.epub_button)
+        layout.addWidget(self.text_output)
 
         self.cancel_requested = False
-        layout.addWidget(self.text_output)
 
         container = QWidget()
         container.setLayout(layout)
@@ -52,7 +55,9 @@ self.epub_button = QPushButton("EPUB 번역 → PDF 저장", self)
         self.thread_pool = QThreadPool()
 
     def run_translate(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "PDF 파일 선택", "", "PDF Files (*.pdf)")
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "PDF 파일 선택", "", "PDF Files (*.pdf)"
+        )
         if not file_path:
             return
 
@@ -65,7 +70,7 @@ self.epub_button = QPushButton("EPUB 번역 → PDF 저장", self)
         self.thread_pool.start(self.worker)
 
         self.page_results = {}
-        self.total_pages = 0
+        self.total_pages = 0  # TODO: 실제 페이지 수로 초기화 필요
         self.completed_pages = 0
         self.status_label.setText("상태: 처리 중...")
         self.progress_bar.setValue(0)
@@ -83,11 +88,12 @@ self.epub_button = QPushButton("EPUB 번역 → PDF 저장", self)
         self.status_label.setText("상태: 완료됨")
         self.progress_bar.setValue(100)
 
-def cancel_translation(self):
+    def cancel_translation(self):
         self.cancel_requested = True
         self.status_label.setText("상태: 중단 요청됨")
+        # TODO: TranslateWorker에 취소 신호 전달 구현 필요
 
-def save_result(self):
+    def save_result(self):
         if not hasattr(self, "page_results") or not self.page_results:
             return
         path, _ = QFileDialog.getSaveFileName(self, "결과 저장", "", "Text Files (*.txt)")
@@ -97,7 +103,7 @@ def save_result(self):
                     f.write(self.page_results[k] + "\n\n")
             self.status_label.setText("상태: 결과 저장 완료")
 
-def run_epub_translate(self):
+    def run_epub_translate(self):
         from core.epub_translate import translate_epub_to_chapters
         from core.pdf_writer import write_chapters_to_pdf
 
