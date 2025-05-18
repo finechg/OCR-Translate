@@ -1,0 +1,7 @@
+PySide6
+pytesseract
+Pillow
+PyMuPDF
+python-dotenv
+langdetect
+googletrans==4.0.0rc1
