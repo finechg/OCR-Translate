@@ -1,4 +1,4 @@
-# OCR_Translate_Modularized
+# OCR_Translate
 
 A modular, high-performance OCR-based multilingual document translation system.  
 Combining Google Cloud Translation API, GPT-based post-processing, and multi-language system components (Python, Go, Rust, C++), this tool provides a streamlined pipeline for scanning, translating, and exporting documents—designed for single-user precision, powered by open-source flexibility.
