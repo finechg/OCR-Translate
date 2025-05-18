@@ -1,3 +1,9 @@
+
+# 더미 번역 함수 삽입 (translate_text 대체)
+def translate_text(text, source_lang="ko", target_lang="en", method="google"):
+    return text + "_translated"
+
+
 def translate_text(text, target_lang):
     import asyncio
     return asyncio.run(translate_text_async(text, target_lang))
