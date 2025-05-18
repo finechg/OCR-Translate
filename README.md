@@ -28,4 +28,4 @@
 - 코드 스타일과 커밋 메시지 규칙을 준수해 주세요.
 
 ## 라이선스
-GPL 3.0
+GNU GENERAL PUBLIC LICENSE Version 3
