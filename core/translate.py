@@ -1,12 +1,34 @@
 
-# 더미 번역 함수 삽입 (translate_text 대체)
-def translate_text(text, source_lang="ko", target_lang="en", method="google"):
-    return text + "_translated"
+def _translate_text_sync(text, target_lang, source_lang=None):
+    """Translate *text* synchronously.
+
+    The previous implementation accidentally called ``translate_text`` from
+    within itself via the asynchronous wrapper which resulted in infinite
+    recursion.  To keep the synchronous implementation reusable by both the
+    public synchronous and asynchronous helpers we perform the actual work in
+    this internal helper.
+    """
+
+    detected_lang = source_lang or detect_language_safe(text)
+
+    manager_kwargs = {"target": target_lang}
+    if detected_lang:
+        manager_kwargs["source"] = detected_lang
+
+    manager = TranslatorManager(**manager_kwargs)
+    try:
+        return manager.translate(text, target=target_lang)
+    finally:
+        # ``TranslatorManager`` exposes ``close`` to release any network or
+        # process resources.  Always close it even if translation fails so the
+        # caller does not leak resources.
+        manager.close()
 
 
-def translate_text(text, target_lang):
-    import asyncio
-    return asyncio.run(translate_text_async(text, target_lang))
+def translate_text(text, target_lang, source_lang=None):
+    """Blocking translation helper used by the rest of the code base."""
+
+    return _translate_text_sync(text, target_lang, source_lang)
 import io
 import html
 import logging
@@ -107,7 +129,12 @@ class TranslateWorker(QRunnable):
 
 import asyncio
 
-async def translate_text_async(text, target_lang):
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, translate_text, text, target_lang)
+
+async def translate_text_async(text, target_lang, source_lang=None):
+    """Asynchronous wrapper around :func:`_translate_text_sync`."""
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, _translate_text_sync, text, target_lang, source_lang
+    )
     return result
