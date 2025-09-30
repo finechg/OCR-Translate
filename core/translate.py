@@ -1,4 +1,3 @@
-
 import asyncio
 import html
 import io
@@ -49,7 +48,6 @@ def _translate_text_sync(text, target_lang, source_lang=None):
 
 def translate_text(text, target_lang, source_lang=None):
     """Blocking translation helper used by the rest of the code base."""
-
     return _translate_text_sync(text, target_lang, source_lang)
 
 
@@ -113,12 +111,14 @@ class TranslateWorker(QRunnable):
                             self.cache_enabled,
                         )
 
+                # 스트리밍 처리: 페이지별 OCR 결과를 바로바로 소비
                 with Pool(min(cpu_count(), 6)) as pool:
                     page_iter = pool.imap(
                         ocr_single_page, _page_image_iter(), chunksize=1
                     )
                     for i, text in page_iter:
                         try:
+                            # 한중일 범위 사이 공백 제거(중문 OCR 줄바꿈 교정)
                             cleaned = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", text)
                             sentences = split_into_sentences(cleaned)
                             if not sentences:
@@ -133,6 +133,7 @@ class TranslateWorker(QRunnable):
                                 if not normalized:
                                     continue
 
+                                # 언어 감지 결과 캐시
                                 try:
                                     lang = self._language_detection_cache[normalized]
                                 except KeyError:
@@ -142,7 +143,7 @@ class TranslateWorker(QRunnable):
                                 if lang in ALLOWED_SOURCE_LANGS:
                                     translated = self._translate_sentence(lang, normalized)
                                 else:
-                                    translated = normalized
+                                    translated = normalized  # 허용 외 언어는 원문 유지
 
                                 translated_sentences.append(translated)
 
@@ -187,7 +188,6 @@ class TranslateWorker(QRunnable):
 
 async def translate_text_async(text, target_lang, source_lang=None):
     """Asynchronous wrapper around :func:`_translate_text_sync`."""
-
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None, _translate_text_sync, text, target_lang, source_lang
