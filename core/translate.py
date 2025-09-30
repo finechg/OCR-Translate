@@ -1,13 +1,48 @@
 
-def _translate_text_sync(text, target_lang, source_lang=None):
-    """Translate *text* synchronously.
+"""OCR and translation helpers for the desktop client."""
 
-    The previous implementation accidentally called ``translate_text`` from
-    within itself via the asynchronous wrapper which resulted in infinite
-    recursion.  To keep the synchronous implementation reusable by both the
-    public synchronous and asynchronous helpers we perform the actual work in
-    this internal helper.
-    """
+from __future__ import annotations
+
+import asyncio
+import html
+import io
+import logging
+import re
+from collections import defaultdict
+from multiprocessing import Pool, cpu_count
+from typing import Dict, List, Optional, Tuple
+
+import fitz
+import pytesseract
+from PIL import Image
+from PySide6.QtCore import QRunnable, Slot
+
+from config import OCR_LANG, OCR_PSM, TARGET_LANG
+from core.lang_utils import detect_language_safe
+from core.ocr_cache import OcrCache
+from core.utils_text import split_into_sentences
+from translate.manager import TranslatorManager
+
+ALLOWED_SOURCE_LANGS = {"en", "zh", "zh-cn", "zh-tw", "ja", "fr", "de", "es"}
+
+# ``multiprocessing`` spins up new Python interpreters for the worker pool.
+# Instantiating :class:`OcrCache` is relatively heavy, so we lazily create a
+# single instance per process and reuse it across invocations.
+_OCR_CACHE: Optional[OcrCache] = None
+
+
+def _get_ocr_cache(cache_enabled: bool) -> Optional[OcrCache]:
+    if not cache_enabled:
+        return None
+
+    global _OCR_CACHE
+    if _OCR_CACHE is None:
+        _OCR_CACHE = OcrCache()
+    return _OCR_CACHE
+
+
+def _translate_text_sync(text, target_lang, source_lang=None):
+    """Translate *text* synchronously."""
 
     detected_lang = source_lang or detect_language_safe(text)
 
@@ -29,35 +64,15 @@ def translate_text(text, target_lang, source_lang=None):
     """Blocking translation helper used by the rest of the code base."""
 
     return _translate_text_sync(text, target_lang, source_lang)
-import io
-import html
-import logging
-import time
-import re
-from PIL import Image
-import pytesseract
-import fitz
-from collections import defaultdict
-from multiprocessing import Pool, Manager, cpu_count
-
-from core.ocr_cache import OcrCache
-from core.lang_utils import detect_language_safe
-from core.utils_text import split_into_sentences
-from translate.manager import TranslatorManager
-from PySide6.QtCore import QRunnable, Slot, QTimer
-
-from config import OCR_LANG, OCR_PSM, TARGET_LANG
-
-ALLOWED_SOURCE_LANGS = {"en", "zh", "zh-cn", "zh-tw", "ja", "fr", "de", "es"}
 
 
-def ocr_single_page(args):
+def ocr_single_page(args: Tuple[int, bytes, bool]):
     i, page_bytes, cache_enabled = args
-    ocr_cache = OcrCache() if cache_enabled else None
+    ocr_cache = _get_ocr_cache(cache_enabled)
 
     try:
         img_bytes = page_bytes
-        if cache_enabled:
+        if ocr_cache is not None:
             cached = ocr_cache.get_text(img_bytes)
             if cached:
                 return (i, cached)
@@ -65,11 +80,11 @@ def ocr_single_page(args):
         img = Image.open(io.BytesIO(img_bytes))
         text = pytesseract.image_to_string(img, lang=OCR_LANG, config=f"--psm {OCR_PSM}")
 
-        if cache_enabled:
+        if ocr_cache is not None:
             ocr_cache.save_text(img_bytes, text)
 
         return (i, text)
-    except Exception as e:
+    except Exception as e:  # pragma: no cover - defensive coding for OCR
         return (i, f"[Page {i+1}] OCR 실패: {e}")
 
 
@@ -80,7 +95,6 @@ class TranslateWorker(QRunnable):
         self.signal_handler = signal_handler
         self.lang = lang
         self.cache_enabled = True
-        self.queue = Manager().Queue()
 
     @Slot()
     def run(self):
@@ -98,36 +112,48 @@ class TranslateWorker(QRunnable):
 
         for i, text in sorted(ocr_results):
             try:
-                cleaned = re.sub(r'(?<=[一-鿿])\s+(?=[一-鿿])', '', text)
+                cleaned = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", text)
                 sentences = split_into_sentences(cleaned)
                 if not sentences:
-                    self.signal_handler.page_done.emit(i, f"[Page {i+1}]\n[빈 페이지 또는 인식 실패]")
+                    self.signal_handler.page_done.emit(
+                        i, f"[Page {i+1}]\n[빈 페이지 또는 인식 실패]"
+                    )
                     continue
 
-                lang_groups = defaultdict(list)
-                for s in sentences:
-                    lang = detect_language_safe(s)
+                lang_groups: Dict[str, List[Tuple[int, str]]] = defaultdict(list)
+                for idx, sentence in enumerate(sentences):
+                    lang = detect_language_safe(sentence)
                     if lang in ALLOWED_SOURCE_LANGS:
-                        lang_groups[lang].append(s)
+                        lang_groups[lang].append((idx, sentence))
 
-                translated_sentences = []
+                translated_by_index: List[Optional[str]] = [None] * len(sentences)
                 for lang, group in lang_groups.items():
                     manager = TranslatorManager(source=lang, target=self.lang)
-                    for sentence in group:
-                        translated = manager.translate(sentence, target=self.lang)
-                        translated_sentences.append(translated)
-                    manager.close()
+                    try:
+                        for idx, sentence in group:
+                            translated_by_index[idx] = manager.translate(
+                                sentence, target=self.lang
+                            )
+                    finally:
+                        manager.close()
 
-                result = f"[Page {i+1}]\n" + html.unescape(" ".join(translated_sentences).strip())
-            except Exception as e:
+                translated_sentences = [
+                    translation
+                    for translation in translated_by_index
+                    if translation is not None
+                ]
+
+                result = (
+                    f"[Page {i+1}]\n"
+                    + html.unescape(" ".join(translated_sentences).strip())
+                )
+            except Exception as e:  # pragma: no cover - runtime safety net
                 logging.error(f"Page {i+1} 처리 실패: {e}")
                 result = f"[Page {i+1}]\n[번역 실패: {e}]"
 
             self.signal_handler.page_done.emit(i, result)
 
         self.signal_handler.finished.emit()
-
-import asyncio
 
 
 async def translate_text_async(text, target_lang, source_lang=None):
