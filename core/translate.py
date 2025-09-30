@@ -1,13 +1,10 @@
-
 import asyncio
 import html
 import io
 import logging
 import re
-from collections import defaultdict
-from contextlib import suppress
 from multiprocessing import Pool, cpu_count
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import fitz
 import pytesseract
@@ -51,7 +48,6 @@ def _translate_text_sync(text, target_lang, source_lang=None):
 
 def translate_text(text, target_lang, source_lang=None):
     """Blocking translation helper used by the rest of the code base."""
-
     return _translate_text_sync(text, target_lang, source_lang)
 
 
@@ -97,59 +93,71 @@ class TranslateWorker(QRunnable):
         self.cache_enabled = True
         self._managers: Dict[str, TranslatorManager] = {}
         self._sentence_cache: Dict[Tuple[str, str], str] = {}
+        self._language_detection_cache: Dict[str, Optional[str]] = {}
 
     @Slot()
     def run(self):
-        doc = None
         try:
-            doc = fitz.open(self.file_path)
-            total_pages = len(doc)
-            page_images = []
+            with fitz.open(self.file_path) as doc:
+                total_pages = len(doc)
 
-            for i in range(total_pages):
-                page = doc.load_page(i)
-                pix = page.get_pixmap(dpi=200)
-                page_images.append((i, pix.tobytes("jpeg"), self.cache_enabled))
-
-            with Pool(min(cpu_count(), 6)) as pool:
-                ocr_results = pool.map(ocr_single_page, page_images)
-
-            for i, text in sorted(ocr_results):
-                try:
-                    cleaned = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", text)
-                    sentences = split_into_sentences(cleaned)
-                    if not sentences:
-                        self.signal_handler.page_done.emit(
-                            i, f"[Page {i+1}]\n[빈 페이지 또는 인식 실패]"
+                def _page_image_iter():
+                    for page_index in range(total_pages):
+                        page = doc.load_page(page_index)
+                        pix = page.get_pixmap(dpi=200)
+                        yield (
+                            page_index,
+                            pix.tobytes("jpeg"),
+                            self.cache_enabled,
                         )
-                        continue
 
-                    lang_groups = defaultdict(list)
-                    for sentence in sentences:
-                        lang = detect_language_safe(sentence)
-                        if lang in ALLOWED_SOURCE_LANGS:
-                            lang_groups[lang].append(sentence)
-
-                    translated_sentences = [
-                        self._translate_sentence(lang, sentence)
-                        for lang, group in lang_groups.items()
-                        for sentence in group
-                    ]
-
-                    result = (
-                        f"[Page {i+1}]\n"
-                        + html.unescape(" ".join(translated_sentences).strip())
+                # 스트리밍 처리: 페이지별 OCR 결과를 바로바로 소비
+                with Pool(min(cpu_count(), 6)) as pool:
+                    page_iter = pool.imap(
+                        ocr_single_page, _page_image_iter(), chunksize=1
                     )
-                except Exception as exc:
-                    logging.error(f"Page {i+1} 처리 실패: {exc}")
-                    result = f"[Page {i+1}]\n[번역 실패: {exc}]"
+                    for i, text in page_iter:
+                        try:
+                            # 한중일 범위 사이 공백 제거(중문 OCR 줄바꿈 교정)
+                            cleaned = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", text)
+                            sentences = split_into_sentences(cleaned)
+                            if not sentences:
+                                self.signal_handler.page_done.emit(
+                                    i, f"[Page {i+1}]\n[빈 페이지 또는 인식 실패]"
+                                )
+                                continue
 
-                self.signal_handler.page_done.emit(i, result)
+                            translated_sentences = []
+                            for sentence in sentences:
+                                normalized = sentence.strip()
+                                if not normalized:
+                                    continue
+
+                                # 언어 감지 결과 캐시
+                                try:
+                                    lang = self._language_detection_cache[normalized]
+                                except KeyError:
+                                    lang = detect_language_safe(normalized)
+                                    self._language_detection_cache[normalized] = lang
+
+                                if lang in ALLOWED_SOURCE_LANGS:
+                                    translated = self._translate_sentence(lang, normalized)
+                                else:
+                                    translated = normalized  # 허용 외 언어는 원문 유지
+
+                                translated_sentences.append(translated)
+
+                            result = (
+                                f"[Page {i+1}]\n"
+                                + html.unescape(" ".join(translated_sentences).strip())
+                            )
+                        except Exception as exc:
+                            logging.error(f"Page {i+1} 처리 실패: {exc}")
+                            result = f"[Page {i+1}]\n[번역 실패: {exc}]"
+
+                        self.signal_handler.page_done.emit(i, result)
         finally:
             self._close_managers()
-            if doc is not None:
-                with suppress(Exception):
-                    doc.close()
             self.signal_handler.finished.emit()
 
     def _translate_sentence(self, lang: str, sentence: str) -> str:
@@ -175,11 +183,11 @@ class TranslateWorker(QRunnable):
                 logging.exception("TranslatorManager 종료 중 오류 발생")
         self._managers.clear()
         self._sentence_cache.clear()
+        self._language_detection_cache.clear()
 
 
 async def translate_text_async(text, target_lang, source_lang=None):
     """Asynchronous wrapper around :func:`_translate_text_sync`."""
-
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None, _translate_text_sync, text, target_lang, source_lang
