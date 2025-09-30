@@ -102,50 +102,59 @@ class TranslateWorker(QRunnable):
         try:
             with fitz.open(self.file_path) as doc:
                 total_pages = len(doc)
-                page_images = []
 
-                for i in range(total_pages):
-                    page = doc.load_page(i)
-                    pix = page.get_pixmap(dpi=200)
-                    page_images.append((i, pix.tobytes("jpeg"), self.cache_enabled))
+                def _page_image_iter():
+                    for page_index in range(total_pages):
+                        page = doc.load_page(page_index)
+                        pix = page.get_pixmap(dpi=200)
+                        yield (
+                            page_index,
+                            pix.tobytes("jpeg"),
+                            self.cache_enabled,
+                        )
 
                 with Pool(min(cpu_count(), 6)) as pool:
-                    ocr_results = pool.map(ocr_single_page, page_images)
+                    page_iter = pool.imap(
+                        ocr_single_page, _page_image_iter(), chunksize=1
+                    )
+                    for i, text in page_iter:
+                        try:
+                            cleaned = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", text)
+                            sentences = split_into_sentences(cleaned)
+                            if not sentences:
+                                self.signal_handler.page_done.emit(
+                                    i, f"[Page {i+1}]\n[빈 페이지 또는 인식 실패]"
+                                )
+                                continue
 
-                for i, text in sorted(ocr_results):
-                    try:
-                        cleaned = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", text)
-                        sentences = split_into_sentences(cleaned)
-                        if not sentences:
-                            self.signal_handler.page_done.emit(
-                                i, f"[Page {i+1}]\n[빈 페이지 또는 인식 실패]"
+                            translated_sentences = []
+                            for sentence in sentences:
+                                normalized = sentence.strip()
+                                if not normalized:
+                                    continue
+
+                                try:
+                                    lang = self._language_detection_cache[normalized]
+                                except KeyError:
+                                    lang = detect_language_safe(normalized)
+                                    self._language_detection_cache[normalized] = lang
+
+                                if lang in ALLOWED_SOURCE_LANGS:
+                                    translated = self._translate_sentence(lang, normalized)
+                                else:
+                                    translated = normalized
+
+                                translated_sentences.append(translated)
+
+                            result = (
+                                f"[Page {i+1}]\n"
+                                + html.unescape(" ".join(translated_sentences).strip())
                             )
-                            continue
+                        except Exception as exc:
+                            logging.error(f"Page {i+1} 처리 실패: {exc}")
+                            result = f"[Page {i+1}]\n[번역 실패: {exc}]"
 
-                        classified_sentences = []
-                        for sentence in sentences:
-                            lang = self._language_detection_cache.get(sentence)
-                            if lang is None:
-                                lang = detect_language_safe(sentence)
-                                self._language_detection_cache[sentence] = lang
-
-                            if lang in ALLOWED_SOURCE_LANGS:
-                                classified_sentences.append((lang, sentence))
-
-                        translated_sentences = [
-                            self._translate_sentence(lang, sentence)
-                            for lang, sentence in classified_sentences
-                        ]
-
-                        result = (
-                            f"[Page {i+1}]\n"
-                            + html.unescape(" ".join(translated_sentences).strip())
-                        )
-                    except Exception as exc:
-                        logging.error(f"Page {i+1} 처리 실패: {exc}")
-                        result = f"[Page {i+1}]\n[번역 실패: {exc}]"
-
-                    self.signal_handler.page_done.emit(i, result)
+                        self.signal_handler.page_done.emit(i, result)
         finally:
             self._close_managers()
             self.signal_handler.finished.emit()
