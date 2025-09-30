@@ -1,4 +1,26 @@
 
+import asyncio
+import html
+import io
+import logging
+import re
+from multiprocessing import Pool, cpu_count
+from typing import Dict, Optional, Tuple
+
+import fitz
+import pytesseract
+from PIL import Image
+from PySide6.QtCore import QRunnable, Slot
+
+from config import OCR_LANG, OCR_PSM, TARGET_LANG
+from core.lang_utils import detect_language_safe
+from core.ocr_cache import OcrCache
+from core.utils_text import split_into_sentences
+from translate.manager import TranslatorManager
+
+ALLOWED_SOURCE_LANGS = {"en", "zh", "zh-cn", "zh-tw", "ja", "fr", "de", "es"}
+
+
 def _translate_text_sync(text, target_lang, source_lang=None):
     """Translate *text* synchronously.
 
@@ -29,26 +51,6 @@ def translate_text(text, target_lang, source_lang=None):
     """Blocking translation helper used by the rest of the code base."""
 
     return _translate_text_sync(text, target_lang, source_lang)
-import io
-import html
-import logging
-import time
-import re
-from PIL import Image
-import pytesseract
-import fitz
-from collections import defaultdict
-from multiprocessing import Pool, Manager, cpu_count
-
-from core.ocr_cache import OcrCache
-from core.lang_utils import detect_language_safe
-from core.utils_text import split_into_sentences
-from translate.manager import TranslatorManager
-from PySide6.QtCore import QRunnable, Slot, QTimer
-
-from config import OCR_LANG, OCR_PSM, TARGET_LANG
-
-ALLOWED_SOURCE_LANGS = {"en", "zh", "zh-cn", "zh-tw", "ja", "fr", "de", "es"}
 
 
 def ocr_single_page(args):
@@ -74,60 +76,104 @@ def ocr_single_page(args):
 
 
 class TranslateWorker(QRunnable):
+    """Worker responsible for extracting text and performing translations.
+
+    The previous implementation instantiated a new ``TranslatorManager`` for
+    every page/language combination which is unnecessarily expensive.  A single
+    PDF may contain hundreds of sentences in the same language which means the
+    creation/teardown of the manager dominated the translation time.  We now
+    keep the managers alive for the lifetime of the worker and reuse
+    translations for identical sentences which significantly reduces repeated
+    RPC calls.
+    """
+
     def __init__(self, file_path, signal_handler, lang=TARGET_LANG):
         super().__init__()
         self.file_path = file_path
         self.signal_handler = signal_handler
         self.lang = lang
         self.cache_enabled = True
-        self.queue = Manager().Queue()
+        self._managers: Dict[str, TranslatorManager] = {}
+        self._sentence_cache: Dict[Tuple[str, str], str] = {}
+        self._language_detection_cache: Dict[str, Optional[str]] = {}
 
     @Slot()
     def run(self):
-        doc = fitz.open(self.file_path)
-        total_pages = len(doc)
-        page_images = []
+        try:
+            with fitz.open(self.file_path) as doc:
+                total_pages = len(doc)
+                page_images = []
 
-        for i in range(total_pages):
-            page = doc.load_page(i)
-            pix = page.get_pixmap(dpi=200)
-            page_images.append((i, pix.tobytes("jpeg"), self.cache_enabled))
+                for i in range(total_pages):
+                    page = doc.load_page(i)
+                    pix = page.get_pixmap(dpi=200)
+                    page_images.append((i, pix.tobytes("jpeg"), self.cache_enabled))
 
-        with Pool(min(cpu_count(), 6)) as pool:
-            ocr_results = pool.map(ocr_single_page, page_images)
+                with Pool(min(cpu_count(), 6)) as pool:
+                    ocr_results = pool.map(ocr_single_page, page_images)
 
-        for i, text in sorted(ocr_results):
+                for i, text in sorted(ocr_results):
+                    try:
+                        cleaned = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", text)
+                        sentences = split_into_sentences(cleaned)
+                        if not sentences:
+                            self.signal_handler.page_done.emit(
+                                i, f"[Page {i+1}]\n[빈 페이지 또는 인식 실패]"
+                            )
+                            continue
+
+                        classified_sentences = []
+                        for sentence in sentences:
+                            lang = self._language_detection_cache.get(sentence)
+                            if lang is None:
+                                lang = detect_language_safe(sentence)
+                                self._language_detection_cache[sentence] = lang
+
+                            if lang in ALLOWED_SOURCE_LANGS:
+                                classified_sentences.append((lang, sentence))
+
+                        translated_sentences = [
+                            self._translate_sentence(lang, sentence)
+                            for lang, sentence in classified_sentences
+                        ]
+
+                        result = (
+                            f"[Page {i+1}]\n"
+                            + html.unescape(" ".join(translated_sentences).strip())
+                        )
+                    except Exception as exc:
+                        logging.error(f"Page {i+1} 처리 실패: {exc}")
+                        result = f"[Page {i+1}]\n[번역 실패: {exc}]"
+
+                    self.signal_handler.page_done.emit(i, result)
+        finally:
+            self._close_managers()
+            self.signal_handler.finished.emit()
+
+    def _translate_sentence(self, lang: str, sentence: str) -> str:
+        cache_key = (lang, sentence)
+        cached = self._sentence_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        manager = self._managers.get(lang)
+        if manager is None:
+            manager = TranslatorManager(source=lang, target=self.lang)
+            self._managers[lang] = manager
+
+        translated = manager.translate(sentence, target=self.lang)
+        self._sentence_cache[cache_key] = translated
+        return translated
+
+    def _close_managers(self) -> None:
+        for manager in self._managers.values():
             try:
-                cleaned = re.sub(r'(?<=[一-鿿])\s+(?=[一-鿿])', '', text)
-                sentences = split_into_sentences(cleaned)
-                if not sentences:
-                    self.signal_handler.page_done.emit(i, f"[Page {i+1}]\n[빈 페이지 또는 인식 실패]")
-                    continue
-
-                lang_groups = defaultdict(list)
-                for s in sentences:
-                    lang = detect_language_safe(s)
-                    if lang in ALLOWED_SOURCE_LANGS:
-                        lang_groups[lang].append(s)
-
-                translated_sentences = []
-                for lang, group in lang_groups.items():
-                    manager = TranslatorManager(source=lang, target=self.lang)
-                    for sentence in group:
-                        translated = manager.translate(sentence, target=self.lang)
-                        translated_sentences.append(translated)
-                    manager.close()
-
-                result = f"[Page {i+1}]\n" + html.unescape(" ".join(translated_sentences).strip())
-            except Exception as e:
-                logging.error(f"Page {i+1} 처리 실패: {e}")
-                result = f"[Page {i+1}]\n[번역 실패: {e}]"
-
-            self.signal_handler.page_done.emit(i, result)
-
-        self.signal_handler.finished.emit()
-
-import asyncio
+                manager.close()
+            except Exception:
+                logging.exception("TranslatorManager 종료 중 오류 발생")
+        self._managers.clear()
+        self._sentence_cache.clear()
+        self._language_detection_cache.clear()
 
 
 async def translate_text_async(text, target_lang, source_lang=None):
