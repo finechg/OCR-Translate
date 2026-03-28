@@ -1,130 +1,28 @@
-# OCR-Translate
+# Gemini OCR-Translate (Android)
 
-A modular, high-performance OCR-based multilingual document translation system.  
-Combining Google Cloud Translation API, GPT-based post-processing, and multi-language system components (Python, Go, Rust, C++), this tool provides a streamlined pipeline for scanning, translating, and exporting documents—designed for single-user precision, powered by open-source flexibility.
-
----
-
-## Overview
-
-OCR_Translate_Modularized enables automatic extraction and translation of scanned documents (PDFs, images, EPUBs) with high-quality output and local caching for performance optimization.
-
-This project is built with:
-
-- Google Cloud Translation API for baseline translations  
-- GPT-4 for post-translation naturalization  
-- SQLite multi-tier caching for efficient reuse  
-- ReportLab PDF rendering with full CJK font support  
-- Modular codebase in Python, Go, Rust, and C++  
-- PySide6 tab-based GUI for streamlined interaction  
+Gemini 3 Flash API를 활용한 안드로이드 전용 OCR 및 번역 도구입니다. 로컬 데이터베이스나 외부 OCR 엔진 없이, Gemini의 긴 컨텍스트 창을 활용하여 데이터 관리와 번역을 통합 처리합니다.
 
 ---
 
-## Features
+## 설계
 
-- OCR processing and sentence-level translation  
-- GPT-powered refinement with optional feedback integration  
-- SQLite-based tiered caching (`translation_cache00.db`, `...01.db`, etc.)  
-- Modular architecture with Go (API caller), Rust (text refiner), C++ (cache writer)  
-- OTF-compatible PDF output with full Unicode/CJK font support  
-- Intuitive tab-based GUI with live progress tracking  
-- AIHub-style bilingual corpus compatibility (KR-CN, KR-EN)  
+- Stateless Architecture: SQLite 등 로컬 캐시를 제거하고, 이전 번역 맥락을 프롬프트에 포함하여 실시간으로 참조합니다.
+- Unified Pipeline: 이미지 인식(OCR)과 문맥 번역을 단일 API 호출로 수행합니다.
+- Android Native: Kivy 프레임워크를 사용하여 모바일 환경 및 구글 플레이 스토어 배포에 최적화되었습니다.
+- Dynamic Configuration: 사용자가 직접 자신의 API Key를 입력하고 관리할 수 있는 설정 기능을 제공합니다.
 
 ---
 
-## Installation
-
-### Prerequisites
-
-- Python 3.11 or higher  
-- Google Cloud Translation API key (saved as `keys.txt`, not tracked by Git)
-
-### Setup
-
-```bash
-pip install -r requirements.txt
-# Optional: build native modules and launch GUI
-bash scripts/run_gui.sh
-```
-
----
-
-## Usage
-
-```bash
-python -m ocr_translate.ui.main_window
-```
-
-1. Load scanned PDFs, images, or EPUB files  
-2. Perform OCR and translate sentence-by-sentence  
-3. Review and manage translations via the cache view  
-4. Export final translated documents as high-quality PDFs  
-
----
-
-## Architecture
-
-- Input: PDF/Image  
-  ↓  
-- OCR Engine  
-  ↓  
-- Sentence Splitter  
-  ↓  
-- Cache Lookup ↔ GPT ↔ Google API  
-  ↓  
-- Post-processing (Rust)  
-  ↓  
-- PDF Rendering (ReportLab)  
-  ↓  
-- GUI / Output File
-
----
-
-## Modules
-
-| Language | Module                | Purpose                              |
-|----------|-----------------------|--------------------------------------|
-| Python   | `core/`               | Main pipeline, GPT handler, GUI      |
-| Rust     | `fast_text_refiner/`  | Fast text normalization, CJK handling |
-| Go       | `translate_caller.go` | API caller for Google Translation    |
-| C++      | `cache_writer.cpp`    | High-speed bulk cache writer         |
-| Bash     | `run_gui.sh`          | Full pipeline launcher               |
-
----
-
-## Directory Structure
+## 프로젝트 구조
 
 ```plaintext
-core/                → Python core modules  
-ui/                  → GUI built with PySide6  
-cpp_modules/         → C++ fast cache handler  
-go_modules/          → Go API caller  
-rust_modules/        → Rust refiner module  
-scripts/             → Shell scripts for execution  
-cache/               → Tiered SQLite cache DBs  
-config/, test_data/  → Supporting assets and test cases  
-README.md            → You are here  
-LICENSE              → GPL-3.0  
-```
+OCR-Translate/
+├── main.py              # 앱 엔트리 포인트 및 화면 전환 로직
+├── buildozer.spec       # 안드로이드 빌드 및 권한 설정
+├── config/
+│   └── config.py        # JsonStore 기반 API 키 및 사용자 설정 관리
+├── utils/
+│   └── gemini_engine.py  # 컨텍스트 기반 번역 엔진 (데이터 관리 통합)
+└── requirements.txt     # 최소 의존성 리스트
 
----
-
-## Contribution
-
-This is a single-user system developed for performance and self-sufficiency.  
-However, bug reports and feature requests are welcome.
-
-- Pull requests are accepted if well-contained and documented  
-- Please respect the modular architecture  
-- Core logic changes should be discussed in advance  
-
----
-
-## License
-
-This project is licensed under the GNU General Public License v3.0 (GPL-3.0).  
-You may freely use, modify, and redistribute the code, but all derivative works must also be open-sourced under the same license.
-
----
-
-> Built for precision, optimized for speed, and open by design — but still, I made it for me.
+## GNU General Public License v3.0 (GPL-3.0)
