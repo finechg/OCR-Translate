@@ -1,42 +1,31 @@
+# ocr_translate/config/config.py
+from kivy.storage.jsonstore import JsonStore
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 
-# .env 로드
-load_dotenv()
+# 앱 데이터가 저장될 경로 (안드로이드 내부 저장소)
+store = JsonStore('user_settings.json')
 
-# OCR 기본 설정
-OCR_LANG = os.getenv("OCR_LANG", "eng+chi_sim")
-OCR_PSM = int(os.getenv("OCR_PSM", 3))
-TARGET_LANG = os.getenv("TARGET_LANG", "ko")
+class ConfigManager:
+    @staticmethod
+    def get_api_key():
+        # 저장소에서 키를 가져오고, 없으면 빈 문자열 반환
+        if store.exists('api_config'):
+            return store.get('api_config')['key']
+        return ""
 
-# 번역기 API 키 로딩: keys.txt 로부터
-def load_keys(file_path="ocr_translate/keys.txt"):
-    keys = {}
-    path = Path(file_path)
-    if not path.exists():
-        return keys
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip() and "=" in line:
-                k, v = line.strip().split("=", 1)
-                keys[k.strip()] = v.strip()
-    return keys
+    @staticmethod
+    def set_api_key(new_key):
+        # 사용자가 입력한 키를 저장소에 기록
+        store.put('api_config', key=new_key.strip())
 
-KEYS = load_keys()
+    @staticmethod
+    def get_target_lang():
+        if store.exists('app_prefs'):
+            return store.get('app_prefs')['target_lang']
+        return "ko" # 기본값 한국어
 
-# 예시:
-# GOOGLE_API_KEY = KEYS.get("GOOGLE")
-# DEEPL_API_KEY = KEYS.get("DEEPL")
-
+# 로그 설정 (터미널 출력용)
 import logging
-
-LOG_FILE = "ocr_translate/logs/ocr_translate.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler()
-    ]
-)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("GeminiApp")
