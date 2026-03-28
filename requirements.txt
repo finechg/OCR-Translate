@@ -1,8 +1,8 @@
-# Required Python packages for OCR-Translate project
-
-Flask
-requests
+# Gemini API 엔진 필수 패키지
 google-generativeai
-kivy
-buildozer
-# Removed: PySide6, googletrans
+Pillow
+requests
+
+# (나중에 앱으로 만들 때 추가할 것들)
+# kivy
+# buildozer
