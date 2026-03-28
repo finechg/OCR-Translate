@@ -1,7 +1,8 @@
-PySide6
-pytesseract
-Pillow
-PyMuPDF
-python-dotenv
-langdetect
-googletrans==4.0.0rc1
+# Required Python packages for OCR-Translate project
+
+Flask
+requests
+google-generativeai
+kivy
+buildozer
+# Removed: PySide6, googletrans
