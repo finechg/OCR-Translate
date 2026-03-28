@@ -1,1 +1,3 @@
-Android Gemini API version: certifi, chardet, idna, requests, google-generativeai, Pillow, kivy, buildozer
+google-generativeai
+Pillow
+requests
