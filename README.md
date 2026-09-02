@@ -1,45 +1,60 @@
 # OCR & Translation FastAPI Server
 
-A personal OCR and translation system built to read Chinese publications in Korean. It started as a small personal project and has gradually evolved from a mobile application into a FastAPI-based backend with parallel processing, caching, and native modules in Go and Rust.
-- I developed this project with extensive assistance from ChatGPT, Gemini, Claude, and Replit, using AI as a development and debugging partner throughout the process.
+A personal OCR and translation system built to read Chinese publications in Korean. 
+The project started as a small personal application and gradually evolved into a 
+FastAPI-based backend with parallel processing, caching, and native modules written 
+in Go and Rust.
 
-The system is designed to make efficient use of limited server resources, using CPU affinity (core pinning) to separate high-performance (P-core) and efficiency (E-core) workloads.
+I used AI tools including ChatGPT, Gemini, Claude, and Replit extensively as 
+development and debugging assistants throughout the project. The overall architecture, 
+feature requirements, and decisions about what to build were driven by my own 
+requirements and problem-solving process.
+
+The system is designed to make efficient use of limited server resources through 
+CPU affinity (core pinning), separating API workloads from CPU-intensive OCR 
+processing.
 
 ---
 
 ## 🚀 Key Features
 
-- **FastAPI Backend Migration**  
-  Completely removed dependencies on legacy PySide6/Kivy GUI and local storage (`JsonStore`), restructuring into a standard REST API optimized for Linux server environments.
-- **CPU Core Pinning Optimization**  
-  Reserved the high-performance core (Core 0) exclusively for the main system and API response handling, while restricting heavy parallel OCR and translation workers to user-designated low-performance core (E-core) regions to ensure system stability.
-- **High-Performance Native Module Integration**  
-  - **Go (`translate_caller`)**: High-speed API communication and translation call bridge utilizing goroutines.
-  - **Rust (`fast_text_refiner`)**: High-speed noise refinement for extracted texts and translations.
-- **High-Speed Parallel Processing and Caching**  
-  - Page-by-page parallel OCR processing based on `multiprocessing.Pool`.
-  - Cross-language caching system (`OcrCache`, sentence-level cache) introduced to minimize redundant computations and repetitive API calls.
+- **FastAPI Backend Migration**
+  - Removed dependencies on the legacy PySide6/Kivy GUI and local `JsonStore` storage.
+  - Restructured the application into a REST API designed for Linux server environments.
+
+- **CPU Core Pinning**
+  - Reserved dedicated CPU cores for system and API workloads.
+  - Assigned CPU-intensive OCR workers to separate cores to prevent heavy processing 
+    from affecting API responsiveness.
+
+- **Native Module Integration**
+  - **Go (`translate_caller`)**: Translation API communication and concurrent request handling using goroutines.
+  - **Rust (`fast_text_refiner`)**: Text cleanup and noise refinement for OCR output and translations.
+
+- **Parallel Processing & Caching**
+  - Page-by-page parallel OCR processing using Python `multiprocessing.Pool`.
+  - Cross-language caching using `OcrCache` and sentence-level caching to reduce 
+    redundant processing and repeated API calls.
 
 ---
 
 ## 🛠️ Tech Stack
 
-- **Backend Framework**: FastAPI, Uvicorn
-- **Core Processing**: Python (Multiprocessing, PyMuPDF/fitz, Pytesseract)
+- **Backend**: FastAPI, Uvicorn
+- **Core Processing**: Python, Multiprocessing, PyMuPDF, Pytesseract
 - **Native Modules**: Go, Rust
 - **AI / API**: Google Gemini API
 
 ---
 
-## ⚙️ Configuration & Environment Variables (`config/config.py`)
+## ⚙️ Configuration
 
-Configurations are managed via standard JSON and environment variables tailored for the server environment.
+Configuration is managed through JSON and environment variables.
 
-- **API Key Setting**: Register the environment variable `GEMINI_API_KEY` or manage it through the configuration file.
-- **Core Allocation Setting**:
+- **API Key**
+  - Set the `GEMINI_API_KEY` environment variable.
+
+- **CPU Allocation**
   ```python
-  # Specify dedicated cores for OCR workers, excluding main system core 0
-  ALLOWED_OCR_CORES = [1, 2, 3, 4, 5, 6, 7]
-  
-- CPU Core Allocation
-  Cores 0 and 1 are reserved for system and API workloads, while OCR workers are assigned to the remaining available CPU cores to prevent CPU-intensive processing from affecting API responsiveness.
+  # CPU cores dedicated to OCR workers
+  ALLOWED_OCR_CORES = [2, 3, 4, 5, 6, 7]
