@@ -1,10 +1,8 @@
 # OCR & Translation FastAPI Server
 
-A personal OCR and translation system built to read Chinese publications in Korean.
-It started as a small personal project and has gradually evolved into a FastAPI-based backend with parallel processing, caching, and native modules in Go and Rust.
+A personal OCR and translation system built to read Chinese publications in Korean. It started as a small personal project and has gradually evolved from a mobile application into a FastAPI-based backend with parallel processing, caching, and native modules in Go and Rust.
 
-A FastAPI backend system that migrates and refactors a legacy mobile (Kivy/Android)-based OCR and translation application to a high-performance server environment.  
-To maximize resource efficiency and optimize system load in resource-constrained server environments, CPU affinity (core pinning) technology is applied to separate high-performance cores (P-cores) and low-performance cores (E-cores).
+The system is designed to make efficient use of limited server resources, using CPU affinity (core pinning) to separate high-performance (P-core) and efficiency (E-core) workloads.
 
 ---
 
