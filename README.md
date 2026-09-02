@@ -39,4 +39,5 @@ Configurations are managed via standard JSON and environment variables tailored 
   ```python
   # Specify dedicated cores for OCR workers, excluding main system core 0
   ALLOWED_OCR_CORES = [1, 2, 3, 4, 5, 6, 7]
-  # To explain the high-performance core (Core 0) and low-performance core (E-core) mentioned in the middle, personally, I thought of cores 0 and 1 as important cores, and the remaining cores as general, low-performance, low-power cores.
+  
+- ### To explain the high-performance core (Core 0) and low-performance core (E-core) mentioned in the middle, personally, I thought of cores 0 and 1 as important cores, and the remaining cores as general, low-performance, low-power cores.
