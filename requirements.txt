@@ -3,6 +3,11 @@ google-generativeai
 Pillow
 requests
 
+# 오라클 서버 FastAPI 백엔드 구축용 패키지 추가
+fastapi
+uvicorn[standard]
+python-multipart
+
 # (나중에 앱으로 만들 때 추가할 것들)
 # kivy
 # buildozer
