@@ -1,6 +1,6 @@
 # OCR & Translation FastAPI Server
 
-A personal OCR and translation system that started as a mobile application and evolved into a FastAPI-based backend.
+A personal FastAPI-based backend.
 
 A FastAPI backend system that migrates and refactors a legacy mobile (Kivy/Android)-based OCR and translation application to a high-performance server environment.  
 To maximize resource efficiency and optimize system load in resource-constrained server environments, CPU affinity (core pinning) technology is applied to separate high-performance cores (P-cores) and low-performance cores (E-cores).
