@@ -1,26 +1,26 @@
 # OCR & Translation FastAPI Server
 
-기존 모바일(Kivy/안드로이드) 기반의 OCR 및 번역 애플리케이션을 고성능 서버 환경에 맞춰 마이그레이션 및 리팩토링한 FastAPI 백엔드 시스템입니다.  
-저사양 서버 환경에서의 효율적인 자원 운용과 시스템 부하 최적화를 위해 고성능 코어(P-코어)와 저성능 코어(E-코어)를 분리하는 CPU 어피니티(Core Pinning) 기술을 적용했습니다.
+A FastAPI backend system that migrates and refactors a legacy mobile (Kivy/Android)-based OCR and translation application to a high-performance server environment.  
+To maximize resource efficiency and optimize system load in resource-constrained server environments, CPU affinity (core pinning) technology is applied to separate high-performance cores (P-cores) and low-performance cores (E-cores).
 
 ---
 
-## 🚀 주요 특징 (Key Features)
+## 🚀 Key Features
 
-- **FastAPI 백엔드 전환**  
-  기존 PySide6/Kivy GUI 및 로컬 저장소(`JsonStore`) 의존성을 완전히 제거하고, Linux 서버 환경에 최적화된 표준 REST API 구조로 개편.
-- **코어 어피니티 (CPU Core Pinning) 최적화**  
-  메인 시스템과 API 응답 처리는 고성능 코어(0번)에 양보하고, 무거운 병렬 OCR 및 번역 연산 워커는 사용자가 지정한 저성능 코어(E-코어) 영역에서만 동작하도록 제한하여 시스템 안정성 확보.
-- **고성능 네이티브 모듈 통합**  
-  - **Go (`translate_caller`)**: 고루틴을 활용한 고속 API 통신 및 번역 호출 브릿지.
-  - **Rust (`fast_text_refiner`)**: 추출된 텍스트 및 번역문의 노이즈 고속 정제.
-- **고속 병렬 처리 및 캐싱**  
-  - `multiprocessing.Pool` 기반의 PDF 페이지별 병렬 OCR 처리.
-  - 교차 언어 캐시 시스템(`OcrCache`, 문장 단위 캐시)을 도입하여 중복 연산 및 반복 API 호출 최소화.
+- **FastAPI Backend Migration**  
+  Completely removed dependencies on legacy PySide6/Kivy GUI and local storage (`JsonStore`), restructuring into a standard REST API optimized for Linux server environments.
+- **CPU Core Pinning Optimization**  
+  Reserved the high-performance core (Core 0) exclusively for the main system and API response handling, while restricting heavy parallel OCR and translation workers to user-designated low-performance core (E-core) regions to ensure system stability.
+- **High-Performance Native Module Integration**  
+  - **Go (`translate_caller`)**: High-speed API communication and translation call bridge utilizing goroutines.
+  - **Rust (`fast_text_refiner`)**: High-speed noise refinement for extracted texts and translations.
+- **High-Speed Parallel Processing and Caching**  
+  - Page-by-page parallel OCR processing based on `multiprocessing.Pool`.
+  - Cross-language caching system (`OcrCache`, sentence-level cache) introduced to minimize redundant computations and repetitive API calls.
 
 ---
 
-## 🛠️ 기술 스택 (Tech Stack)
+## 🛠️ Tech Stack
 
 - **Backend Framework**: FastAPI, Uvicorn
 - **Core Processing**: Python (Multiprocessing, PyMuPDF/fitz, Pytesseract)
@@ -29,12 +29,12 @@
 
 ---
 
-## ⚙️ 설정 및 환경 변수 (`config/config.py`)
+## ⚙️ Configuration & Environment Variables (`config/config.py`)
 
-서버 환경에 맞춰 표준 JSON 및 환경 변수를 통해 설정을 관리합니다.
+Configurations are managed via standard JSON and environment variables tailored for the server environment.
 
-- **API 키 설정**: 환경 변수 `GEMINI_API_KEY`를 등록하거나 설정 파일을 통해 관리할 수 있습니다.
-- **코어 할당 설정**:
+- **API Key Setting**: Register the environment variable `GEMINI_API_KEY` or manage it through the configuration file.
+- **Core Allocation Setting**:
   ```python
-  # 메인 시스템 코어 0을 제외한 OCR 워커 전용 코어 지정
+  # Specify dedicated cores for OCR workers, excluding main system core 0
   ALLOWED_OCR_CORES = [1, 2, 3, 4, 5, 6, 7]
