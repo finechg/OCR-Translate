@@ -2,6 +2,7 @@ import asyncio
 import html
 import io
 import logging
+import os
 import re
 from multiprocessing import Pool, cpu_count
 from typing import Dict, Optional, Tuple
@@ -10,13 +11,22 @@ import fitz
 import pytesseract
 from PIL import Image
 
-from config import OCR_LANG, OCR_PSM, TARGET_LANG
+from config import ALLOWED_OCR_CORES, OCR_LANG, OCR_PSM, TARGET_LANG
 from core.lang_utils import detect_language_safe
 from core.ocr_cache import OcrCache
 from core.utils_text import split_into_sentences
 from translate.manager import TranslatorManager
 
 ALLOWED_SOURCE_LANGS = {"en", "zh", "zh-cn", "zh-tw", "ja", "fr", "de", "es"}
+
+
+def worker_init():
+    """각 멀티프로세싱 워커가 실행될 때 지정된 저성능 코어만 사용하도록 제한"""
+    try:
+        os.sched_setaffinity(0, ALLOWED_OCR_CORES)
+    except AttributeError:
+        # Windows 등 sched_setaffinity를 지원하지 않는 환경 예외 처리
+        pass
 
 
 def _translate_text_sync(text, target_lang, source_lang=None):
@@ -101,7 +111,8 @@ def process_pdf_backend(file_path: str, target_lang: str = TARGET_LANG) -> dict:
                         cache_enabled,
                     )
 
-            with Pool(min(cpu_count(), 6)) as pool:
+            pool_processes = max(1, min(len(ALLOWED_OCR_CORES), cpu_count()))
+            with Pool(processes=pool_processes, initializer=worker_init) as pool:
                 page_iter = pool.imap(
                     ocr_single_page, _page_image_iter(), chunksize=1
                 )
