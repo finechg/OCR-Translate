@@ -9,7 +9,6 @@ from typing import Dict, Optional, Tuple
 import fitz
 import pytesseract
 from PIL import Image
-from PySide6.QtCore import QRunnable, Slot
 
 from config import OCR_LANG, OCR_PSM, TARGET_LANG
 from core.lang_utils import detect_language_safe
@@ -21,15 +20,7 @@ ALLOWED_SOURCE_LANGS = {"en", "zh", "zh-cn", "zh-tw", "ja", "fr", "de", "es"}
 
 
 def _translate_text_sync(text, target_lang, source_lang=None):
-    """Translate *text* synchronously.
-
-    The previous implementation accidentally called ``translate_text`` from
-    within itself via the asynchronous wrapper which resulted in infinite
-    recursion.  To keep the synchronous implementation reusable by both the
-    public synchronous and asynchronous helpers we perform the actual work in
-    this internal helper.
-    """
-
+    """Translate *text* synchronously."""
     detected_lang = source_lang or detect_language_safe(text)
 
     manager_kwargs = {"target": target_lang}
@@ -40,9 +31,6 @@ def _translate_text_sync(text, target_lang, source_lang=None):
     try:
         return manager.translate(text, target=target_lang)
     finally:
-        # ``TranslatorManager`` exposes ``close`` to release any network or
-        # process resources.  Always close it even if translation fails so the
-        # caller does not leak resources.
         manager.close()
 
 
@@ -73,117 +61,93 @@ def ocr_single_page(args):
         return (i, f"[Page {i+1}] OCR 실패: {e}")
 
 
-class TranslateWorker(QRunnable):
-    """Worker responsible for extracting text and performing translations.
-
-    The previous implementation instantiated a new ``TranslatorManager`` for
-    every page/language combination which is unnecessarily expensive.  A single
-    PDF may contain hundreds of sentences in the same language which means the
-    creation/teardown of the manager dominated the translation time.  We now
-    keep the managers alive for the lifetime of the worker and reuse
-    translations for identical sentences which significantly reduces repeated
-    RPC calls.
+def process_pdf_backend(file_path: str, target_lang: str = TARGET_LANG) -> dict:
     """
+    FastAPI 서버 환경에서 UI 시그널 없이 PDF 전체를 병렬 OCR 및 번역하고
+    결과를 딕셔너리 형태로 반환하는 순수 함수 백엔드 로직
+    """
+    results = {}
+    managers: Dict[str, TranslatorManager] = {}
+    sentence_cache: Dict[Tuple[str, str], str] = {}
+    language_detection_cache: Dict[str, Optional[str]] = {}
+    cache_enabled = True
 
-    def __init__(self, file_path, signal_handler, lang=TARGET_LANG):
-        super().__init__()
-        self.file_path = file_path
-        self.signal_handler = signal_handler
-        self.lang = lang
-        self.cache_enabled = True
-        self._managers: Dict[str, TranslatorManager] = {}
-        self._sentence_cache: Dict[Tuple[str, str], str] = {}
-        self._language_detection_cache: Dict[str, Optional[str]] = {}
-
-    @Slot()
-    def run(self):
-        try:
-            with fitz.open(self.file_path) as doc:
-                total_pages = len(doc)
-
-                def _page_image_iter():
-                    for page_index in range(total_pages):
-                        page = doc.load_page(page_index)
-                        pix = page.get_pixmap(dpi=200)
-                        yield (
-                            page_index,
-                            pix.tobytes("jpeg"),
-                            self.cache_enabled,
-                        )
-
-                # 스트리밍 처리: 페이지별 OCR 결과를 바로바로 소비
-                with Pool(min(cpu_count(), 6)) as pool:
-                    page_iter = pool.imap(
-                        ocr_single_page, _page_image_iter(), chunksize=1
-                    )
-                    for i, text in page_iter:
-                        try:
-                            # 한중일 범위 사이 공백 제거(중문 OCR 줄바꿈 교정)
-                            cleaned = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", text)
-                            sentences = split_into_sentences(cleaned)
-                            if not sentences:
-                                self.signal_handler.page_done.emit(
-                                    i, f"[Page {i+1}]\n[빈 페이지 또는 인식 실패]"
-                                )
-                                continue
-
-                            translated_sentences = []
-                            for sentence in sentences:
-                                normalized = sentence.strip()
-                                if not normalized:
-                                    continue
-
-                                # 언어 감지 결과 캐시
-                                try:
-                                    lang = self._language_detection_cache[normalized]
-                                except KeyError:
-                                    lang = detect_language_safe(normalized)
-                                    self._language_detection_cache[normalized] = lang
-
-                                if lang in ALLOWED_SOURCE_LANGS:
-                                    translated = self._translate_sentence(lang, normalized)
-                                else:
-                                    translated = normalized  # 허용 외 언어는 원문 유지
-
-                                translated_sentences.append(translated)
-
-                            result = (
-                                f"[Page {i+1}]\n"
-                                + html.unescape(" ".join(translated_sentences).strip())
-                            )
-                        except Exception as exc:
-                            logging.error(f"Page {i+1} 처리 실패: {exc}")
-                            result = f"[Page {i+1}]\n[번역 실패: {exc}]"
-
-                        self.signal_handler.page_done.emit(i, result)
-        finally:
-            self._close_managers()
-            self.signal_handler.finished.emit()
-
-    def _translate_sentence(self, lang: str, sentence: str) -> str:
+    def _translate_sentence(lang: str, sentence: str) -> str:
         cache_key = (lang, sentence)
-        cached = self._sentence_cache.get(cache_key)
+        cached = sentence_cache.get(cache_key)
         if cached is not None:
             return cached
 
-        manager = self._managers.get(lang)
+        manager = managers.get(lang)
         if manager is None:
-            manager = TranslatorManager(source=lang, target=self.lang)
-            self._managers[lang] = manager
+            manager = TranslatorManager(source=lang, target=target_lang)
+            managers[lang] = manager
 
-        translated = manager.translate(sentence, target=self.lang)
-        self._sentence_cache[cache_key] = translated
+        translated = manager.translate(sentence, target=target_lang)
+        sentence_cache[cache_key] = translated
         return translated
 
-    def _close_managers(self) -> None:
-        for manager in self._managers.values():
+    try:
+        with fitz.open(file_path) as doc:
+            total_pages = len(doc)
+
+            def _page_image_iter():
+                for page_index in range(total_pages):
+                    page = doc.load_page(page_index)
+                    pix = page.get_pixmap(dpi=200)
+                    yield (
+                        page_index,
+                        pix.tobytes("jpeg"),
+                        cache_enabled,
+                    )
+
+            with Pool(min(cpu_count(), 6)) as pool:
+                page_iter = pool.imap(
+                    ocr_single_page, _page_image_iter(), chunksize=1
+                )
+                for i, text in page_iter:
+                    try:
+                        cleaned = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", text)
+                        sentences = split_into_sentences(cleaned)
+                        if not sentences:
+                            results[f"page_{i+1}"] = "[빈 페이지 또는 인식 실패]"
+                            continue
+
+                        translated_sentences = []
+                        for sentence in sentences:
+                            normalized = sentence.strip()
+                            if not normalized:
+                                continue
+
+                            try:
+                                lang = language_detection_cache[normalized]
+                            except KeyError:
+                                lang = detect_language_safe(normalized)
+                                language_detection_cache[normalized] = lang
+
+                            if lang in ALLOWED_SOURCE_LANGS:
+                                translated = _translate_sentence(lang, normalized)
+                            else:
+                                translated = normalized
+
+                            translated_sentences.append(translated)
+
+                        page_result = html.unescape(" ".join(translated_sentences).strip())
+                        results[f"page_{i+1}"] = page_result
+                    except Exception as exc:
+                        logging.error(f"Page {i+1} 처리 실패: {exc}")
+                        results[f"page_{i+1}"] = f"[번역 실패: {exc}]"
+    finally:
+        for manager in managers.values():
             try:
                 manager.close()
             except Exception:
                 logging.exception("TranslatorManager 종료 중 오류 발생")
-        self._managers.clear()
-        self._sentence_cache.clear()
-        self._language_detection_cache.clear()
+        managers.clear()
+        sentence_cache.clear()
+        language_detection_cache.clear()
+
+    return results
 
 
 async def translate_text_async(text, target_lang, source_lang=None):
