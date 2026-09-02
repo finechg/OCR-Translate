@@ -1,6 +1,7 @@
 # OCR & Translation FastAPI Server
 
 A personal OCR and translation system built to read Chinese publications in Korean. It started as a small personal project and has gradually evolved from a mobile application into a FastAPI-based backend with parallel processing, caching, and native modules in Go and Rust.
+- And all of this code was created with ChatGPT, Gemini, Claude, and Replit.
 
 The system is designed to make efficient use of limited server resources, using CPU affinity (core pinning) to separate high-performance (P-core) and efficiency (E-core) workloads.
 
