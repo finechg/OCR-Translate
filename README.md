@@ -1,7 +1,7 @@
 # OCR & Translation FastAPI Server
 
 A personal OCR and translation system built to read Chinese publications in Korean. It started as a small personal project and has gradually evolved from a mobile application into a FastAPI-based backend with parallel processing, caching, and native modules in Go and Rust.
-- And all of this code was created with ChatGPT, Gemini, Claude, and Replit.
+- I developed this project with extensive assistance from ChatGPT, Gemini, Claude, and Replit, using AI as a development and debugging partner throughout the process.
 
 The system is designed to make efficient use of limited server resources, using CPU affinity (core pinning) to separate high-performance (P-core) and efficiency (E-core) workloads.
 
@@ -41,4 +41,5 @@ Configurations are managed via standard JSON and environment variables tailored 
   # Specify dedicated cores for OCR workers, excluding main system core 0
   ALLOWED_OCR_CORES = [1, 2, 3, 4, 5, 6, 7]
   
-- ### To explain the high-performance core (Core 0) and low-performance core (E-core) mentioned in the middle, personally, I thought of cores 0 and 1 as important cores, and the remaining cores as general, low-performance, low-power cores.
+- CPU Core Allocation
+  Cores 0 and 1 are reserved for system and API workloads, while OCR workers are assigned to the remaining available CPU cores to prevent CPU-intensive processing from affecting API responsiveness.
