@@ -1,0 +1,40 @@
+import httpx
+import asyncio
+
+class TranslationService:
+    def __init__(self):
+        # DeepL Free API seting
+        self.api_key = "your keys"
+        self.url = "https://api-free.deepl.com/v2/translate"
+
+    async def translate_text(self, text: str) -> str:
+        if not text.strip(): return ""
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                headers = {"Authorization": f"DeepL-Auth-Key {self.api_key}"}
+                data = {
+                    "text": [text],
+                    "target_lang": "KO"  # source_lang을 생략하면 자동 감지(영어/중국어 모두 대응)
+                }
+                response = await client.post(self.url, headers=headers, data=data, timeout=10.0)
+                
+                if response.status_code != 200:
+                    return f"DeepL 오류 ({response.status_code}): {response.text}"
+                
+                result = response.json()
+                return result["translations"][0]["text"]
+            except Exception as e:
+                return f"번역 엔진 연결 실패: {str(e)}"
+
+    async def translate_words_batch(self, words: list) -> list:
+        if not words: return []
+        async with httpx.AsyncClient() as client:
+            try:
+                headers = {"Authorization": f"DeepL-Auth-Key {self.api_key}"}
+                data = {"text": words, "target_lang": "KO"}
+                response = await client.post(self.url, headers=headers, data=data, timeout=10.0)
+                result = response.json()
+                return [t["text"] for t in result["translations"]]
+            except Exception:
+                return ["뜻 찾기 실패"] * len(words)
